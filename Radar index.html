@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pokémon GO • Global Event Radar</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-top: #120929;
+      --bg-mid: #3a1859;
+      --bg-bot: #d45b84;
+    }
+
+    body {
+      font-family: 'Montserrat', sans-serif;
+      background: linear-gradient(155deg, var(--bg-top) 0%, #241145 35%, var(--bg-mid) 68%, var(--bg-bot) 100%);
+      min-height: 100vh;
+      color: #ffffff;
+      overflow-x: hidden;
+    }
+
+    .font-mono-tech {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Tarjetas flotantes sobre el mapa (solo éstas se elevan levemente al pasar el cursor) */
+    .map-node-card {
+      background: rgba(20, 12, 42, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+      transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+    }
+
+    .map-node-card:hover {
+      transform: translate(-50%, -50%) scale(1.04);
+      z-index: 40;
+      border-color: rgba(255, 255, 255, 0.6);
+    }
+
+    /* Tarjetas estáticas en vista Lista / Cuadrícula (sin desplazamiento ni escala) */
+    .static-grid-card {
+      background: rgba(20, 12, 42, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+      transition: border-color 0.25s ease, box-shadow 0.25s ease;
+    }
+
+    .static-grid-card:hover {
+      border-color: rgba(255, 255, 255, 0.55);
+    }
+
+    .card-active {
+      border: 2px solid #00ff9d !important;
+      box-shadow: 0 0 24px rgba(0, 255, 157, 0.45), inset 0 0 12px rgba(0, 255, 157, 0.15) !important;
+    }
+
+    .card-upcoming {
+      border: 1px solid rgba(255, 184, 77, 0.5);
+    }
+
+    .card-finished {
+      opacity: 0.52;
+      filter: grayscale(35%);
+    }
+
+    @keyframes pulse-ring {
+      0% { transform: scale(0.9); opacity: 0.9; }
+      70% { transform: scale(2.2); opacity: 0; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+
+    .radar-dot::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 9999px;
+      background: #00ff9d;
+      animation: pulse-ring 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+
+    .map-frame {
+      background: rgba(15, 8, 32, 0.42);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+    }
+
+    .world-svg {
+      filter: drop-shadow(0 0 12px rgba(255, 140, 185, 0.2));
+    }
+
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: rgba(18, 9, 41, 0.6); }
+    ::-webkit-scrollbar-thumb { background: rgba(255, 126, 179, 0.5); border-radius: 4px; }
+  </style>
+</head>
+<body class="flex flex-col justify-between p-3 md:p-6">
+
+  <div class="max-w-[1440px] w-full mx-auto space-y-5">
+
+    <!-- ENCABEZADO SUPERIOR + SELECTOR DE PAÍS E IDIOMA -->
+    <header class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 border-b border-white/15 pb-4">
+      <div>
+        <div class="flex flex-wrap items-center gap-2.5">
+          <span class="px-2.5 py-0.5 text-xs font-extrabold tracking-widest uppercase rounded bg-pink-500/30 border border-pink-400/50 text-pink-200">
+            POKÉMON GO • GLOBAL TIMINGS
+          </span>
+          <span id="localClockBadge" class="px-2.5 py-0.5 text-xs font-mono-tech font-bold rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-300">
+            GT: --:--:--
+          </span>
+          <span id="savedIndicator" class="hidden px-2 py-0.5 text-[11px] font-bold rounded bg-cyan-500/20 border border-cyan-400/40 text-cyan-200">
+            ✓ Guardado
+          </span>
+        </div>
+        <h1 id="mainTitle" class="text-2xl md:text-4xl font-black tracking-tight uppercase mt-1.5 bg-clip-text text-transparent bg-gradient-to-r from-white via-pink-100 to-pink-300">
+          ETERNAMAX ETERNATUS • RADAR MUNDIAL
+        </h1>
+        <p id="subTitle" class="text-xs md:text-sm text-pink-100/80 mt-0.5">
+          Horarios globales convertidos automáticamente a tu reloj local con contadores en vivo y coordenadas listas para copiar.
+        </p>
+      </div>
+
+      <!-- Controles de País/Zona Horaria Local, Idioma y Vista -->
+      <div class="flex flex-wrap items-center gap-2.5">
+        <!-- Selector País / Horario Local -->
+        <div class="flex items-center gap-1.5 bg-black/40 border border-white/20 rounded-xl px-3 py-1.5">
+          <span class="text-xs text-pink-200 font-bold" id="lblCountry">🌎 Tu País:</span>
+          <select id="userCountrySelect" class="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer">
+            <option value="America/Guatemala|es" class="bg-[#1b0e38]">🇬🇹 Guatemala (UTC-6)</option>
+            <option value="America/Mexico_City|es" class="bg-[#1b0e38]">🇲🇽 México CDMX (UTC-6)</option>
+            <option value="America/Bogota|es" class="bg-[#1b0e38]">🇨🇴 Colombia / 🇵🇪 Perú (UTC-5)</option>
+            <option value="America/Argentina/Buenos_Aires|es" class="bg-[#1b0e38]">🇦🇷 Argentina / 🇨🇱 Chile (UTC-3)</option>
+            <option value="Europe/Madrid|es" class="bg-[#1b0e38]">🇪🇸 España (UTC+1)</option>
+            <option value="America/New_York|en" class="bg-[#1b0e38]">🇺🇸 USA Este / NY (UTC-5)</option>
+            <option value="America/Los_Angeles|en" class="bg-[#1b0e38]">🇺🇸 USA Pacífico / LA (UTC-8)</option>
+            <option value="Europe/London|en" class="bg-[#1b0e38]">🇬🇧 Reino Unido (UTC+0)</option>
+            <option value="America/Sao_Paulo|pt" class="bg-[#1b0e38]">🇧🇷 Brasil (UTC-3)</option>
+            <option value="Europe/Paris|fr" class="bg-[#1b0e38]">🇫🇷 Francia (UTC+1)</option>
+            <option value="Asia/Tokyo|ja" class="bg-[#1b0e38]">🇯🇵 Japón (UTC+9)</option>
+            <option value="AUTO|auto" class="bg-[#1b0e38]">🛰️ Auto (Navegador)</option>
+          </select>
+        </div>
+
+        <!-- Selector Multi-lenguaje -->
+        <div class="flex items-center gap-1.5 bg-black/40 border border-white/20 rounded-xl px-3 py-1.5">
+          <span class="text-xs text-pink-200 font-bold">🗣️</span>
+          <select id="langSelect" class="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer">
+            <option value="es" class="bg-[#1b0e38]">Español</option>
+            <option value="en" class="bg-[#1b0e38]">English</option>
+            <option value="pt" class="bg-[#1b0e38]">Português</option>
+            <option value="fr" class="bg-[#1b0e38]">Français</option>
+            <option value="ja" class="bg-[#1b0e38]">日本語</option>
+          </select>
+        </div>
+
+        <!-- Selector de Vista -->
+        <div class="flex items-center gap-1.5 bg-black/30 p-1.5 rounded-xl border border-white/15">
+          <button id="btnMapView" onclick="setView('map')" class="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-pink-500 text-white shadow transition">
+            🗺️ Mapa Mundi
+          </button>
+          <button id="btnGridView" onclick="setView('grid')" class="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider text-white/75 hover:text-white transition">
+            📋 Tarjetas / Lista
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- BARRA DE CONFIGURACIÓN PERSISTENTE DEL EVENTO -->
+    <section class="bg-black/35 backdrop-blur-md border border-white/15 rounded-2xl p-4 flex flex-col lg:flex-row items-stretch lg:items-end justify-between gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 flex-1">
+        <div>
+          <label id="lblEventName" class="block text-[11px] font-bold uppercase tracking-wider text-pink-200 mb-1">Nombre del Evento</label>
+          <input id="eventNameInput" type="text" value="ETERNAMAX ETERNATUS"
+            class="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-sm font-bold text-white focus:outline-none focus:border-pink-400" />
+        </div>
+        <div>
+          <label id="lblEventDate" class="block text-[11px] font-bold uppercase tracking-wider text-pink-200 mb-1">Fecha Local del Evento</label>
+          <input id="eventDateInput" type="date" value="2026-11-21"
+            class="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-sm font-mono-tech text-white focus:outline-none focus:border-pink-400" />
+        </div>
+        <div>
+          <label id="lblStartTime" class="block text-[11px] font-bold uppercase tracking-wider text-pink-200 mb-1">Inicio (Hora Local País)</label>
+          <input id="startTimeInput" type="time" value="11:00"
+            class="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-sm font-mono-tech text-white focus:outline-none focus:border-pink-400" />
+        </div>
+        <div>
+          <label id="lblEndTime" class="block text-[11px] font-bold uppercase tracking-wider text-pink-200 mb-1">Fin (Hora Local País)</label>
+          <input id="endTimeInput" type="time" value="14:00"
+            class="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-sm font-mono-tech text-white focus:outline-none focus:border-pink-400" />
+        </div>
+      </div>
+
+      <!-- Presets + Botón Restablecer -->
+      <div class="flex flex-wrap items-center gap-2">
+        <span id="lblPresets" class="text-[11px] uppercase font-bold text-white/60 mr-1">Presets:</span>
+        <button id="presetEternatus" onclick="applyPreset('ETERNAMAX ETERNATUS', '2026-11-21', '11:00', '14:00')"
+          class="px-3 py-2 rounded-lg text-xs font-bold bg-purple-600/50 hover:bg-purple-500/70 border border-purple-400/40 transition">
+          Eternatus (11-14h)
+        </button>
+        <button id="presetCD" onclick="applyPreset('COMMUNITY DAY', null, '14:00', '17:00')"
+          class="px-3 py-2 rounded-lg text-xs font-bold bg-white/10 hover:bg-white/20 border border-white/20 transition">
+          Community Day (14-17h)
+        </button>
+        <button id="presetRaid" onclick="applyPreset('HORA DE INCURSIONES', null, '18:00', '19:00')"
+          class="px-3 py-2 rounded-lg text-xs font-bold bg-white/10 hover:bg-white/20 border border-white/20 transition">
+          Raid Hour (18-19h)
+        </button>
+        <button id="btnReset" onclick="resetDefaults()" title="Restablecer valores por defecto"
+          class="px-2.5 py-2 rounded-lg text-xs font-bold bg-rose-500/20 hover:bg-rose-500/40 border border-rose-400/30 text-rose-200 transition">
+          ↺
+        </button>
+      </div>
+    </section>
+
+    <!-- BARRA DE RESUMEN EN VIVO -->
+    <section id="liveSummaryBar" class="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div class="bg-emerald-950/55 border border-emerald-400/40 rounded-xl px-4 py-3 flex items-center justify-between">
+        <div>
+          <span id="lblActiveNow" class="text-[11px] font-bold uppercase tracking-wider text-emerald-300">🟢 Activo Ahora Mismo</span>
+          <p id="activeNowSummary" class="text-sm font-extrabold text-white mt-0.5">Calculando...</p>
+        </div>
+        <span id="activeCountBadge" class="text-xl font-black font-mono-tech text-emerald-300">0</span>
+      </div>
+
+      <div class="bg-amber-950/50 border border-amber-400/40 rounded-xl px-4 py-3 flex items-center justify-between">
+        <div>
+          <span id="lblNextToStart" class="text-[11px] font-bold uppercase tracking-wider text-amber-300">⏳ Próximo en Iniciar</span>
+          <p id="nextStartSummary" class="text-sm font-extrabold text-white mt-0.5">Calculando...</p>
+        </div>
+        <span id="nextStartTimer" class="text-sm font-black font-mono-tech text-amber-300">--:--:--</span>
+      </div>
+
+      <div class="bg-pink-950/50 border border-pink-400/40 rounded-xl px-4 py-3 flex items-center justify-between">
+        <div>
+          <span id="lblLocalWindow" class="text-[11px] font-bold uppercase tracking-wider text-pink-300">📍 Tu Horario Local</span>
+          <p id="localHomeSummary" class="text-sm font-extrabold text-white mt-0.5">--:-- - --:--</p>
+        </div>
+        <span class="text-xs font-bold px-2 py-1 rounded bg-pink-500/30 text-pink-100">LOCAL</span>
+      </div>
+    </section>
+
+    <!-- CONTENEDOR PRINCIPAL: MAPA MUNDI INTERACTIVO -->
+    <main id="mapViewContainer" class="relative w-full overflow-x-auto pb-2">
+      <div class="map-frame relative min-w-[1050px] w-full aspect-[16/9] rounded-2xl overflow-hidden select-none">
+
+        <!-- Marcas técnicas en las esquinas -->
+        <div class="absolute top-3 left-3 w-6 h-6 border-t-2 border-l-2 border-white/40 pointer-events-none"></div>
+        <div class="absolute top-3 right-3 w-6 h-6 border-t-2 border-r-2 border-white/40 pointer-events-none"></div>
+        <div class="absolute bottom-3 left-3 w-6 h-6 border-b-2 border-l-2 border-white/40 pointer-events-none"></div>
+        <div class="absolute bottom-3 right-3 w-6 h-6 border-b-2 border-r-2 border-white/40 pointer-events-none"></div>
+
+        <!-- Mapa Mundi Vectorial -->
+        <img
+          src="https://upload.wikimedia.org/wikipedia/commons/8/80/World_map_-_low_resolution.svg"
+          alt="Mapa Mundi"
+          class="world-svg absolute inset-0 w-full h-full object-contain opacity-30 invert pointer-events-none px-6 py-4"
+        />
+
+        <!-- Capa de Nodos y Tarjetas -->
+        <div id="mapNodesLayer" class="absolute inset-0"></div>
+
+        <!-- Pie de leyenda inferior dentro del mapa -->
+        <div class="absolute bottom-3 inset-x-0 text-center pointer-events-none">
+          <p id="mapFooterTitle" class="text-xs md:text-sm font-black tracking-[0.25em] uppercase text-white/90 drop-shadow">
+            GLOBAL EVENT RELEASE TIMES • HORA LOCAL
+          </p>
+          <p id="mapFooterSub" class="text-[10px] tracking-[0.18em] uppercase text-pink-200/80">
+            HAZ CLIC EN CUALQUIER TARJETA PARA COPIAR SUS COORDENADAS DE JUEGO
+          </p>
+        </div>
+      </div>
+    </main>
+
+    <!-- VISTA ALTERNATIVA EN TARJETAS ESTÁTICAS (SIN DESPLAZAMIENTO NI ESCALA) -->
+    <section id="gridViewContainer" class="hidden grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5"></section>
+
+  </div>
+
+  <!-- PIE DE PÁGINA FIJO CON ENLACE A SINAPSISX.COM -->
+  <footer class="max-w-[1440px] w-full mx-auto mt-8 pt-4 border-t border-white/15 flex items-center justify-center">
+    <a href="https://sinapsisx.com" target="_blank" rel="noopener noreferrer"
+       class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-black/35 hover:bg-black/55 border border-white/20 hover:border-pink-400/60 transition shadow-lg group">
+      <span class="w-2 h-2 rounded-full bg-pink-400 group-hover:bg-emerald-400 transition"></span>
+      <span class="text-xs font-extrabold tracking-widest uppercase text-white/90 group-hover:text-white">
+        by <span class="text-pink-300 group-hover:text-emerald-300 transition">Sinapsis X</span>
+      </span>
+      <span class="text-[11px] text-white/60 group-hover:text-white/90">↗</span>
+    </a>
+  </footer>
+
+  <!-- Toast de notificación al copiar -->
+  <div id="copyToast" class="fixed bottom-5 right-5 z-50 hidden items-center gap-2 bg-emerald-500 text-slate-950 font-extrabold text-xs px-4 py-3 rounded-xl shadow-2xl">
+    <span>📋</span>
+    <span id="copyToastText">Coordenadas copiadas</span>
+  </div>
+
+  <script>
+    const STORAGE_KEY = 'pogo_global_radar_state_v1';
+
+    const DEFAULT_STATE = {
+      eventName: 'ETERNAMAX ETERNATUS',
+      eventDate: '2026-11-21',
+      startTime: '11:00',
+      endTime: '14:00',
+      countrySetting: 'America/Guatemala|es',
+      lang: 'es',
+      view: 'map'
+    };
+
+    const translations = {
+      es: {
+        subTitle: 'Horarios globales convertidos automáticamente a tu reloj local con contadores en vivo y coordenadas listas para copiar.',
+        lblCountry: '🌎 Tu País:',
+        btnMapView: '🗺️ Mapa Mundi',
+        btnGridView: '📋 Tarjetas / Lista',
+        lblEventName: 'Nombre del Evento',
+        lblEventDate: 'Fecha Local del Evento',
+        lblStartTime: 'Inicio (Hora Local País)',
+        lblEndTime: 'Fin (Hora Local País)',
+        lblPresets: 'Presets:',
+        lblActiveNow: '🟢 Activo Ahora Mismo',
+        lblNextToStart: '⏳ Próximo en Iniciar',
+        lblLocalWindow: '📍 Tu Horario Local',
+        mapFooterTitle: 'GLOBAL EVENT RELEASE TIMES • HORA LOCAL',
+        mapFooterSub: 'HAZ CLIC EN CUALQUIER TARJETA PARA COPIAR SUS COORDENADAS DE JUEGO',
+        statusActive: 'ACTIVO',
+        statusUpcoming: 'PRÓXIMO',
+        statusFinished: 'FINALIZADO',
+        endsIn: 'Termina en:',
+        startsIn: 'Inicia en:',
+        eventFinished: 'Evento finalizado',
+        noneActive: 'Ninguna zona activa',
+        allFinished: 'Todas las zonas finalizaron',
+        startsAt: 'Inicia',
+        copyBtn: 'Copiar',
+        copiedMsg: 'Coordenadas copiadas',
+        savedTag: '✓ Guardado',
+        days: ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'],
+        cities: {
+          auckland: 'Auckland',
+          sydney: 'Sídney',
+          tokyo: 'Tokio',
+          zaragoza: 'Zaragoza',
+          london: 'Londres',
+          saopaulo: 'São Paulo',
+          newyork: 'Nueva York',
+          guatemala: 'Guatemala / CDMX',
+          sanfrancisco: 'San Francisco',
+          honolulu: 'Honolulu'
+        }
+      },
+      en: {
+        subTitle: 'Global event schedules automatically converted to your local clock with live countdowns and one-click coordinates.',
+        lblCountry: '🌎 Your Country:',
+        btnMapView: '🗺️ World Map',
+        btnGridView: '📋 Cards / List',
+        lblEventName: 'Event Name',
+        lblEventDate: 'Local Event Date',
+        lblStartTime: 'Start (Local Time)',
+        lblEndTime: 'End (Local Time)',
+        lblPresets: 'Presets:',
+        lblActiveNow: '🟢 Active Right Now',
+        lblNextToStart: '⏳ Next to Start',
+        lblLocalWindow: '📍 Your Local Window',
+        mapFooterTitle: 'GLOBAL EVENT RELEASE TIMES • LOCAL TIME',
+        mapFooterSub: 'CLICK ANY CARD TO COPY IN-GAME COORDINATES',
+        statusActive: 'ACTIVE',
+        statusUpcoming: 'UPCOMING',
+        statusFinished: 'FINISHED',
+        endsIn: 'Ends in:',
+        startsIn: 'Starts in:',
+        eventFinished: 'Event finished',
+        noneActive: 'No active zone right now',
+        allFinished: 'All zones finished',
+        startsAt: 'Starts',
+        copyBtn: 'Copy',
+        copiedMsg: 'Coordinates copied',
+        savedTag: '✓ Saved',
+        days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+        cities: {
+          auckland: 'Auckland',
+          sydney: 'Sydney',
+          tokyo: 'Tokyo',
+          zaragoza: 'Zaragoza',
+          london: 'London',
+          saopaulo: 'São Paulo',
+          newyork: 'New York',
+          guatemala: 'Guatemala / CDMX',
+          sanfrancisco: 'San Francisco',
+          honolulu: 'Honolulu'
+        }
+      },
+      pt: {
+        subTitle: 'Horários globais convertidos automaticamente para o seu relógio local com contadores ao vivo e coordenadas prontas para copiar.',
+        lblCountry: '🌎 Seu País:',
+        btnMapView: '🗺️ Mapa-Múndi',
+        btnGridView: '📋 Cartões / Lista',
+        lblEventName: 'Nome do Evento',
+        lblEventDate: 'Data Local do Evento',
+        lblStartTime: 'Início (Hora Local)',
+        lblEndTime: 'Fim (Hora Local)',
+        lblPresets: 'Presets:',
+        lblActiveNow: '🟢 Ativo Agora',
+        lblNextToStart: '⏳ Próximo a Iniciar',
+        lblLocalWindow: '📍 Seu Horário Local',
+        mapFooterTitle: 'GLOBAL EVENT RELEASE TIMES • HORÁRIO LOCAL',
+        mapFooterSub: 'CLIQUE EM QUALQUER CARTÃO PARA COPIAR AS COORDENADAS',
+        statusActive: 'ATIVO',
+        statusUpcoming: 'EM BREVE',
+        statusFinished: 'ENCERRADO',
+        endsIn: 'Termina em:',
+        startsIn: 'Começa em:',
+        eventFinished: 'Evento encerrado',
+        noneActive: 'Nenhuma zona ativa',
+        allFinished: 'Todas as zonas encerradas',
+        startsAt: 'Inicia',
+        copyBtn: 'Copiar',
+        copiedMsg: 'Coordenadas copiadas',
+        savedTag: '✓ Salvo',
+        days: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'],
+        cities: {
+          auckland: 'Auckland',
+          sydney: 'Sydney',
+          tokyo: 'Tóquio',
+          zaragoza: 'Saragoça',
+          london: 'Londres',
+          saopaulo: 'São Paulo',
+          newyork: 'Nova York',
+          guatemala: 'Guatemala / CDMX',
+          sanfrancisco: 'São Francisco',
+          honolulu: 'Honolulu'
+        }
+      },
+      fr: {
+        subTitle: 'Horaires mondiaux convertis automatiquement à votre heure locale avec comptes à rebours en direct et coordonnées à copier.',
+        lblCountry: '🌎 Votre Pays:',
+        btnMapView: '🗺️ Carte du Monde',
+        btnGridView: '📋 Cartes / Liste',
+        lblEventName: "Nom de l'événement",
+        lblEventDate: "Date locale de l'événement",
+        lblStartTime: 'Début (Heure locale)',
+        lblEndTime: 'Fin (Heure locale)',
+        lblPresets: 'Préréglages:',
+        lblActiveNow: '🟢 Actif Maintenant',
+        lblNextToStart: '⏳ Prochain Départ',
+        lblLocalWindow: '📍 Votre Horaire Local',
+        mapFooterTitle: 'GLOBAL EVENT RELEASE TIMES • HEURE LOCALE',
+        mapFooterSub: 'CLIQUEZ SUR UNE CARTE POUR COPIER LES COORDONNÉES',
+        statusActive: 'ACTIF',
+        statusUpcoming: 'À VENIR',
+        statusFinished: 'TERMINÉ',
+        endsIn: 'Finit dans:',
+        startsIn: 'Débute dans:',
+        eventFinished: 'Événement terminé',
+        noneActive: 'Aucune zone active',
+        allFinished: 'Toutes les zones terminées',
+        startsAt: 'Début',
+        copyBtn: 'Copier',
+        copiedMsg: 'Coordonnées copiées',
+        savedTag: '✓ Enregistré',
+        days: ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'],
+        cities: {
+          auckland: 'Auckland',
+          sydney: 'Sydney',
+          tokyo: 'Tokyo',
+          zaragoza: 'Saragosse',
+          london: 'Londres',
+          saopaulo: 'São Paulo',
+          newyork: 'New York',
+          guatemala: 'Guatemala / CDMX',
+          sanfrancisco: 'San Francisco',
+          honolulu: 'Honolulu'
+        }
+      },
+      ja: {
+        subTitle: '世界中のイベント時間をあなたの現地時間に自動変換。リアルタイムのカウントダウンと座標コピー機能付き。',
+        lblCountry: '🌎 あなたの国:',
+        btnMapView: '🗺️ 世界地図',
+        btnGridView: '📋 カード一覧',
+        lblEventName: 'イベント名',
+        lblEventDate: '現地開催日',
+        lblStartTime: '開始 (現地時間)',
+        lblEndTime: '終了 (現地時間)',
+        lblPresets: 'プリセット:',
+        lblActiveNow: '🟢 現在開催中',
+        lblNextToStart: '⏳ 次の開催地',
+        lblLocalWindow: '📍 あなたの現地時間',
+        mapFooterTitle: 'GLOBAL EVENT RELEASE TIMES • 現地時間',
+        mapFooterSub: 'カードをクリックして座標をコピー',
+        statusActive: '開催中',
+        statusUpcoming: '開催予定',
+        statusFinished: '終了',
+        endsIn: '終了まで:',
+        startsIn: '開始まで:',
+        eventFinished: 'イベント終了',
+        noneActive: '現在開催中の地域はありません',
+        allFinished: '全地域で終了しました',
+        startsAt: '開始',
+        copyBtn: 'コピー',
+        copiedMsg: '座標をコピーしました',
+        savedTag: '✓ 保存済み',
+        days: ['日', '月', '火', '水', '木', '金', '土'],
+        cities: {
+          auckland: 'オークランド',
+          sydney: 'シドニー',
+          tokyo: '東京',
+          zaragoza: 'サラゴサ',
+          london: 'ロンドン',
+          saopaulo: 'サンパウロ',
+          newyork: 'ニューヨーク',
+          guatemala: 'グアテマラ / CDMX',
+          sanfrancisco: 'サンフランシスコ',
+          honolulu: 'ホノルル'
+        }
+      }
+    };
+
+    const pogoNodes = [
+      { id: 'auckland', tz: 'Pacific/Auckland', coords: '-36.8485, 174.7633', top: '81%', left: '92%' },
+      { id: 'sydney', tz: 'Australia/Sydney', coords: '-33.8688, 151.2093', top: '76%', left: '83%' },
+      { id: 'tokyo', tz: 'Asia/Tokyo', coords: '35.6895, 139.6917', top: '39%', left: '84%' },
+      { id: 'zaragoza', tz: 'Europe/Madrid', coords: '41.6488, -0.8891', top: '36%', left: '46.5%' },
+      { id: 'london', tz: 'Europe/London', coords: '51.5074, -0.1278', top: '24%', left: '46.5%' },
+      { id: 'saopaulo', tz: 'America/Sao_Paulo', coords: '-23.5505, -46.6333', top: '72%', left: '34%' },
+      { id: 'newyork', tz: 'America/New_York', coords: '40.7580, -73.9855', top: '36%', left: '28.5%' },
+      { id: 'guatemala', tz: 'America/Guatemala', coords: '14.6349, -90.5069', top: '53%', left: '21.5%' },
+      { id: 'sanfrancisco', tz: 'America/Los_Angeles', coords: '37.8044, -122.4194', top: '37%', left: '15.5%' },
+      { id: 'honolulu', tz: 'Pacific/Honolulu', coords: '21.3069, -157.8583', top: '50%', left: '7.5%' }
+    ];
+
+    let appState = { ...DEFAULT_STATE };
+    let saveBadgeTimeout = null;
+
+    function loadSavedState() {
+      let loaded = null;
+      // 1. Intentar leer desde localStorage
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          loaded = JSON.parse(raw);
+        }
+      } catch (e) {}
+
+      // 2. Si hay parámetros en el hash de la URL y no había localStorage, usarlos como respaldo
+      if (!loaded && window.location.hash && window.location.hash.length > 1) {
+        try {
+          const params = new URLSearchParams(window.location.hash.slice(1));
+          if (params.get('name')) {
+            loaded = {
+              eventName: params.get('name') || DEFAULT_STATE.eventName,
+              eventDate: params.get('date') || DEFAULT_STATE.eventDate,
+              startTime: params.get('start') || DEFAULT_STATE.startTime,
+              endTime: params.get('end') || DEFAULT_STATE.endTime,
+              countrySetting: params.get('country') || DEFAULT_STATE.countrySetting,
+              lang: params.get('lang') || DEFAULT_STATE.lang,
+              view: params.get('view') || DEFAULT_STATE.view
+            };
+          }
+        } catch (e) {}
+      }
+
+      if (loaded) {
+        appState = { ...DEFAULT_STATE, ...loaded };
+      }
+
+      // Aplicar valores cargados a los inputs
+      document.getElementById('eventNameInput').value = appState.eventName;
+      document.getElementById('eventDateInput').value = appState.eventDate;
+      document.getElementById('startTimeInput').value = appState.startTime;
+      document.getElementById('endTimeInput').value = appState.endTime;
+      document.getElementById('userCountrySelect').value = appState.countrySetting;
+      document.getElementById('langSelect').value = appState.lang;
+    }
+
+    function persistState(showIndicator = true) {
+      appState.eventName = document.getElementById('eventNameInput').value;
+      appState.eventDate = document.getElementById('eventDateInput').value;
+      appState.startTime = document.getElementById('startTimeInput').value;
+      appState.endTime = document.getElementById('endTimeInput').value;
+      appState.countrySetting = document.getElementById('userCountrySelect').value;
+      appState.lang = document.getElementById('langSelect').value;
+
+      // Guardar en localStorage
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+      } catch (e) {}
+
+      // Sincronizar también en hash de la URL sin recargar la página
+      try {
+        const params = new URLSearchParams({
+          name: appState.eventName,
+          date: appState.eventDate,
+          start: appState.startTime,
+          end: appState.endTime,
+          country: appState.countrySetting,
+          lang: appState.lang,
+          view: appState.view
+        });
+        history.replaceState(null, '', '#' + params.toString());
+      } catch (e) {}
+
+      if (showIndicator) {
+        const badge = document.getElementById('savedIndicator');
+        badge.textContent = translations[appState.lang]?.savedTag || '✓ Guardado';
+        badge.classList.remove('hidden');
+        clearTimeout(saveBadgeTimeout);
+        saveBadgeTimeout = setTimeout(() => {
+          badge.classList.add('hidden');
+        }, 1800);
+      }
+    }
+
+    function resetDefaults() {
+      appState = { ...DEFAULT_STATE };
+      document.getElementById('eventNameInput').value = appState.eventName;
+      document.getElementById('eventDateInput').value = appState.eventDate;
+      document.getElementById('startTimeInput').value = appState.startTime;
+      document.getElementById('endTimeInput').value = appState.endTime;
+      document.getElementById('userCountrySelect').value = appState.countrySetting;
+      document.getElementById('langSelect').value = appState.lang;
+      try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+      try { history.replaceState(null, '', window.location.pathname); } catch (e) {}
+      applyTranslations();
+      setView(appState.view, false);
+      render();
+    }
+
+    function getUserTimeZone() {
+      const val = document.getElementById('userCountrySelect').value;
+      const tz = val.split('|')[0];
+      if (tz === 'AUTO') {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Guatemala';
+      }
+      return tz;
+    }
+
+    function getShortTzLabel(tz) {
+      const labels = {
+        'America/Guatemala': 'GT',
+        'America/Mexico_City': 'MX',
+        'America/Bogota': 'CO/PE',
+        'America/Argentina/Buenos_Aires': 'AR/CL',
+        'Europe/Madrid': 'ES',
+        'America/New_York': 'EST',
+        'America/Los_Angeles': 'PST',
+        'Europe/London': 'UK',
+        'America/Sao_Paulo': 'BR',
+        'Europe/Paris': 'FR',
+        'Asia/Tokyo': 'JP'
+      };
+      return labels[tz] || tz.split('/').pop().replace('_', ' ');
+    }
+
+    function applyTranslations() {
+      const t = translations[appState.lang] || translations.es;
+      document.getElementById('subTitle').textContent = t.subTitle;
+      document.getElementById('lblCountry').textContent = t.lblCountry;
+      document.getElementById('btnMapView').textContent = t.btnMapView;
+      document.getElementById('btnGridView').textContent = t.btnGridView;
+      document.getElementById('lblEventName').textContent = t.lblEventName;
+      document.getElementById('lblEventDate').textContent = t.lblEventDate;
+      document.getElementById('lblStartTime').textContent = t.lblStartTime;
+      document.getElementById('lblEndTime').textContent = t.lblEndTime;
+      document.getElementById('lblPresets').textContent = t.lblPresets;
+      document.getElementById('lblActiveNow').textContent = t.lblActiveNow;
+      document.getElementById('lblNextToStart').textContent = t.lblNextToStart;
+      document.getElementById('lblLocalWindow').textContent = t.lblLocalWindow;
+      document.getElementById('mapFooterTitle').textContent = t.mapFooterTitle;
+      document.getElementById('mapFooterSub').textContent = t.mapFooterSub;
+    }
+
+    function zonedTimeToUtc(dateStr, timeStr, timeZone) {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const [hh, mm] = timeStr.split(':').map(Number);
+      const utcGuess = Date.UTC(y, m - 1, d, hh, mm, 0);
+
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false
+      });
+
+      const parts = formatter.formatToParts(new Date(utcGuess));
+      const map = {};
+      parts.forEach(p => { if (p.type !== 'literal') map[p.type] = p.value; });
+
+      const tzAsUtc = Date.UTC(
+        Number(map.year),
+        Number(map.month) - 1,
+        Number(map.day),
+        Number(map.hour === '24' ? 0 : map.hour),
+        Number(map.minute),
+        Number(map.second)
+      );
+
+      const offsetMs = tzAsUtc - utcGuess;
+      return new Date(utcGuess - offsetMs);
+    }
+
+    function formatUserDateTime(dateObj, userTz) {
+      const t = translations[appState.lang] || translations.es;
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: userTz,
+        weekday: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).formatToParts(dateObj);
+
+      const map = {};
+      parts.forEach(p => { if (p.type !== 'literal') map[p.type] = p.value; });
+
+      const dayIndex = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(map.weekday);
+      const dayLabel = dayIndex >= 0 ? t.days[dayIndex] : map.weekday;
+      const hourStr = map.hour === '24' ? '00' : map.hour;
+      return { day: dayLabel, time: `${hourStr}:${map.minute}` };
+    }
+
+    function formatCountdown(ms) {
+      if (ms <= 0) return '00h 00m 00s';
+      const totalSec = Math.floor(ms / 1000);
+      const days = Math.floor(totalSec / 86400);
+      const hours = Math.floor((totalSec % 86400) / 3600);
+      const mins = Math.floor((totalSec % 3600) / 60);
+      const secs = totalSec % 60;
+      const hms = `${String(hours).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m ${String(secs).padStart(2, '0')}s`;
+      return days > 0 ? `${days}d ${hms}` : hms;
+    }
+
+    function copyCoords(cityName, coords, event) {
+      if (event) event.stopPropagation();
+      const t = translations[appState.lang] || translations.es;
+      navigator.clipboard.writeText(coords).then(() => {
+        const toast = document.getElementById('copyToast');
+        document.getElementById('copyToastText').textContent = `${t.copiedMsg} (${cityName}): ${coords}`;
+        toast.classList.remove('hidden');
+        toast.classList.add('flex');
+        setTimeout(() => {
+          toast.classList.add('hidden');
+          toast.classList.remove('flex');
+        }, 2500);
+      });
+    }
+
+    function setView(view, shouldSave = true) {
+      appState.view = view;
+      const mapCont = document.getElementById('mapViewContainer');
+      const gridCont = document.getElementById('gridViewContainer');
+      const btnMap = document.getElementById('btnMapView');
+      const btnGrid = document.getElementById('btnGridView');
+
+      if (view === 'map') {
+        mapCont.classList.remove('hidden');
+        gridCont.classList.add('hidden');
+        gridCont.classList.remove('grid');
+        btnMap.className = 'px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-pink-500 text-white shadow transition';
+        btnGrid.className = 'px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider text-white/75 hover:text-white transition';
+      } else {
+        mapCont.classList.add('hidden');
+        gridCont.classList.remove('hidden');
+        gridCont.classList.add('grid');
+        btnGrid.className = 'px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-pink-500 text-white shadow transition';
+        btnMap.className = 'px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider text-white/75 hover:text-white transition';
+      }
+      if (shouldSave) persistState(false);
+    }
+
+    function applyPreset(name, dateStr, startStr, endStr) {
+      document.getElementById('eventNameInput').value = name;
+      if (dateStr) {
+        document.getElementById('eventDateInput').value = dateStr;
+      }
+      document.getElementById('startTimeInput').value = startStr;
+      document.getElementById('endTimeInput').value = endStr;
+      persistState(true);
+      render();
+    }
+
+    function render() {
+      const t = translations[appState.lang] || translations.es;
+      const userTz = getUserTimeZone();
+      const shortTz = getShortTzLabel(userTz);
+
+      const now = new Date();
+      const eventName = document.getElementById('eventNameInput').value.trim() || 'POKÉMON GO EVENT';
+      const dateStr = document.getElementById('eventDateInput').value;
+      const startStr = document.getElementById('startTimeInput').value;
+      const endStr = document.getElementById('endTimeInput').value;
+
+      document.getElementById('mainTitle').textContent = `${eventName} • RADAR MUNDIAL`;
+
+      const localTimeNow = now.toLocaleTimeString('en-GB', {
+        timeZone: userTz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      });
+      document.getElementById('localClockBadge').textContent = `${shortTz}: ${localTimeNow}`;
+
+      if (!dateStr || !startStr || !endStr) return;
+
+      const mapLayer = document.getElementById('mapNodesLayer');
+      const gridContainer = document.getElementById('gridViewContainer');
+      mapLayer.innerHTML = '';
+      gridContainer.innerHTML = '';
+
+      let activeCities = [];
+      let nextUpcoming = null;
+
+      pogoNodes.forEach(node => {
+        const cityName = t.cities[node.id] || node.id;
+        const startUtc = zonedTimeToUtc(dateStr, startStr, node.tz);
+        let endUtc = zonedTimeToUtc(dateStr, endStr, node.tz);
+        if (endUtc <= startUtc) {
+          endUtc = new Date(endUtc.getTime() + 86400000);
+        }
+
+        const startLocal = formatUserDateTime(startUtc, userTz);
+        const endLocal = formatUserDateTime(endUtc, userTz);
+        const localWindowText = `${startLocal.day} ${startLocal.time} - ${endLocal.time} ${shortTz}`;
+
+        let stateClass = '';
+        let badgeHtml = '';
+        let countdownLabel = '';
+        let countdownValue = '';
+        let isActive = false;
+
+        if (now >= startUtc && now <= endUtc) {
+          isActive = true;
+          stateClass = 'card-active';
+          badgeHtml = `<span class="px-1.5 py-0.5 text-[9px] font-black uppercase rounded bg-emerald-400 text-slate-950">${t.statusActive}</span>`;
+          countdownLabel = t.endsIn;
+          countdownValue = formatCountdown(endUtc - now);
+          activeCities.push(cityName);
+        } else if (now < startUtc) {
+          stateClass = 'card-upcoming';
+          badgeHtml = `<span class="px-1.5 py-0.5 text-[9px] font-black uppercase rounded bg-amber-400/90 text-slate-950">${t.statusUpcoming}</span>`;
+          countdownLabel = t.startsIn;
+          countdownValue = formatCountdown(startUtc - now);
+          if (!nextUpcoming || startUtc < nextUpcoming.startUtc) {
+            nextUpcoming = { name: cityName, startUtc, localWindowText };
+          }
+        } else {
+          stateClass = 'card-finished';
+          badgeHtml = `<span class="px-1.5 py-0.5 text-[9px] font-bold uppercase rounded bg-white/20 text-white/80">${t.statusFinished}</span>`;
+          countdownLabel = t.eventFinished;
+          countdownValue = '--:--:--';
+        }
+
+        // 1. Renderizar en Mapa Mundi
+        const pinWrapper = document.createElement('div');
+        pinWrapper.style.top = node.top;
+        pinWrapper.style.left = node.left;
+        pinWrapper.className = 'map-node-card absolute -translate-x-1/2 -translate-y-1/2 w-[166px] rounded-xl p-2.5 cursor-pointer ' + stateClass;
+        pinWrapper.onclick = (e) => copyCoords(cityName, node.coords, e);
+
+        pinWrapper.innerHTML = `
+          <div class="flex items-center justify-between gap-1 mb-1">
+            <span class="text-[11px] font-extrabold uppercase tracking-tight text-pink-200 truncate">${cityName}</span>
+            ${badgeHtml}
+          </div>
+          <div class="text-[11px] font-bold text-white bg-white/10 rounded px-1.5 py-0.5 text-center font-mono-tech">
+            ${localWindowText}
+          </div>
+          <div class="mt-1.5 text-center">
+            <div class="text-[9px] uppercase tracking-wider ${isActive ? 'text-emerald-300 font-bold' : 'text-white/65'}">${countdownLabel}</div>
+            <div class="text-xs font-black font-mono-tech ${isActive ? 'text-emerald-300' : 'text-white'}">${countdownValue}</div>
+          </div>
+          <div class="mt-1.5 pt-1 border-t border-white/10 flex items-center justify-between text-[9px] text-white/60 hover:text-white">
+            <span class="font-mono-tech truncate">${node.coords}</span>
+            <span class="font-bold text-pink-300 ml-1">📋</span>
+          </div>
+        `;
+        mapLayer.appendChild(pinWrapper);
+
+        // 2. Renderizar en Vista Tarjetas / Lista (100% ESTÁTICA)
+        const gridCard = document.createElement('div');
+        gridCard.className = 'static-grid-card rounded-2xl p-4 flex flex-col justify-between cursor-pointer ' + stateClass;
+        gridCard.onclick = (e) => copyCoords(cityName, node.coords, e);
+        gridCard.innerHTML = `
+          <div>
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="text-sm font-black uppercase text-pink-200">${cityName}</h3>
+              ${badgeHtml}
+            </div>
+            <p class="text-xs font-mono-tech text-white/90 mt-1.5 bg-white/10 px-2.5 py-1 rounded-lg inline-block">
+              🕒 ${localWindowText}
+            </p>
+          </div>
+          <div class="mt-3 pt-2.5 border-t border-white/10 flex items-end justify-between">
+            <div>
+              <span class="block text-[10px] uppercase tracking-wider text-white/60">${countdownLabel}</span>
+              <span class="text-base font-black font-mono-tech ${isActive ? 'text-emerald-300' : 'text-white'}">${countdownValue}</span>
+            </div>
+            <button onclick="copyCoords('${cityName}', '${node.coords}', event)"
+              class="px-2.5 py-1 rounded-lg bg-pink-500/30 hover:bg-pink-500/50 border border-pink-400/40 text-[11px] font-bold text-pink-100">
+              📋 ${t.copyBtn}
+            </button>
+          </div>
+        `;
+        gridContainer.appendChild(gridCard);
+      });
+
+      // Actualizar barras superiores
+      document.getElementById('activeCountBadge').textContent = activeCities.length;
+      document.getElementById('activeNowSummary').textContent =
+        activeCities.length > 0 ? activeCities.join(' • ') : t.noneActive;
+
+      if (nextUpcoming) {
+        document.getElementById('nextStartSummary').textContent = `${nextUpcoming.name} (${nextUpcoming.localWindowText})`;
+        document.getElementById('nextStartTimer').textContent = formatCountdown(nextUpcoming.startUtc - now);
+      } else {
+        document.getElementById('nextStartSummary').textContent = t.allFinished;
+        document.getElementById('nextStartTimer').textContent = '--:--:--';
+      }
+
+      const homeStart = zonedTimeToUtc(dateStr, startStr, userTz);
+      let homeEnd = zonedTimeToUtc(dateStr, endStr, userTz);
+      if (homeEnd <= homeStart) homeEnd = new Date(homeEnd.getTime() + 86400000);
+      const homeS = formatUserDateTime(homeStart, userTz);
+      const homeE = formatUserDateTime(homeEnd, userTz);
+      document.getElementById('localHomeSummary').textContent = `${homeS.day} ${homeS.time} - ${homeE.time} (${shortTz})`;
+    }
+
+    // Listeners que guardan automáticamente al escribir o cambiar opciones
+    ['eventNameInput', 'eventDateInput', 'startTimeInput', 'endTimeInput'].forEach(id => {
+      const el = document.getElementById(id);
+      el.addEventListener('input', () => {
+        persistState(true);
+        render();
+      });
+      el.addEventListener('change', () => {
+        persistState(true);
+        render();
+      });
+    });
+
+    document.getElementById('userCountrySelect').addEventListener('change', (e) => {
+      const suggestedLang = e.target.value.split('|')[1];
+      if (suggestedLang && suggestedLang !== 'auto') {
+        document.getElementById('langSelect').value = suggestedLang;
+      }
+      persistState(true);
+      applyTranslations();
+      render();
+    });
+
+    document.getElementById('langSelect').addEventListener('change', () => {
+      persistState(true);
+      applyTranslations();
+      render();
+    });
+
+    // Inicialización al cargar la página
+    loadSavedState();
+    applyTranslations();
+    setView(appState.view, false);
+    render();
+    setInterval(render, 1000);
+  </script>
+</body>
+</html>
